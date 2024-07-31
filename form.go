@@ -9,14 +9,12 @@ import (
 )
 
 type Form struct {
-	keyMap keyMap
-
+	keyMap   keyMap
 	help     help.Model
 	question textarea.Model
 	answer   textarea.Model
-
-	index int
-	edit  bool
+	index    int
+	edit     bool
 }
 
 func newDefaultForm() *Form {
@@ -24,25 +22,20 @@ func newDefaultForm() *Form {
 }
 
 func NewForm(question, answer string) *Form {
-	fc := Form{
-		help:     help.New(),
-		question: textarea.New(),
-		answer:   textarea.New(),
-		keyMap:   FormKeyMap(),
-		edit:     false,
-	}
-	fc.question.ShowLineNumbers = false
-	fc.answer.ShowLineNumbers = false
-	fc.question.SetHeight(3)
-	fc.answer.SetHeight(3)
-	fc.help.ShowAll = false
+	fc := BasicEdit()
 	fc.question.Placeholder = question
 	fc.answer.Placeholder = answer
-	fc.question.Focus()
-	return &fc
+	return fc
 }
 
 func EditForm(question, answer string) *Form {
+	fc := BasicEdit()
+	fc.question.SetValue(question)
+	fc.answer.SetValue(answer)
+	return fc
+}
+
+func BasicEdit() *Form {
 	fc := Form{
 		help:     help.New(),
 		question: textarea.New(),
@@ -51,26 +44,26 @@ func EditForm(question, answer string) *Form {
 		edit:     false,
 	}
 	fc.question.ShowLineNumbers = false
-	fc.answer.ShowLineNumbers = false
-	fc.question.SetHeight(3)
-	fc.answer.SetHeight(3)
+	fc.answer.ShowLineNumbers = true
+	fc.question.SetHeight(10)
+	fc.answer.SetHeight(20)
+	fc.answer.SetWidth(200)
 	fc.help.ShowAll = false
-	fc.question.SetValue(question)
-	fc.answer.SetValue(answer)
+	fc.answer.CharLimit = 20000
 	fc.question.Focus()
 	return &fc
 }
 
 func (f Form) EditCard(card *Card) {
-	front := WrapString(f.question.Value(), 40)
-	back := WrapString(f.answer.Value(), 40)
+	front := f.question.Value() // No wrapping here
+	back := f.answer.Value()
 	card.Front = front
 	card.Back = back
 }
 
 func (f Form) CreateCard() *Card {
-	front := WrapString(f.question.Value(), 40)
-	back := WrapString(f.answer.Value(), 40)
+	front := f.question.Value() // No wrapping here
+	back := f.answer.Value()
 	return NewCard(front, back)
 }
 

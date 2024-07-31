@@ -18,8 +18,7 @@ var (
 	cli           bool
 	criticalError error
 
-	sep    = ','
-	prompt = false
+	sep = ','
 
 	helpText = strings.TrimSpace(`
 
@@ -36,10 +35,7 @@ Import:
     -t                      - assigns tab sep (default sep=',')
 
   goki opt < deck.txt       - import deck in using stdin
-
-Generate:
-  goki --gpt "my prompt"    - generate a deck from a text prompt
-  goki --gpt < my_notes.txt - generate a deck from text or markdown files`)
+`)
 )
 
 func main() {
@@ -59,12 +55,7 @@ func runCLI(args []string) {
 		return
 	}
 
-	var response string
-	if prompt {
-		response = createDeckStdin()
-	} else {
-		response = readDeckStdin(sep)
-	}
+	response := ""
 
 	if response != "" {
 		fmt.Println(response)
@@ -102,7 +93,7 @@ func parseArgs(args []string) error {
 			} else {
 				fmt.Println("Not enough args to run 'goki review <deck index>.'")
 				fmt.Println("Use 'goki list' to view deck index.")
-				return errors.New("Input Error")
+				return errors.New("input error")
 			}
 		case "-n":
 			if i <= len(args)-2 {
@@ -111,20 +102,13 @@ func parseArgs(args []string) error {
 			} else {
 				fmt.Println("Please provide a deck name.")
 				fmt.Println("Use 'goki help' for more info.")
-				return errors.New("Input Error")
+				return errors.New("input Error")
 			}
 		case "-t":
 			sep = '\t'
-		case "--gpt":
-			prompt = true
-			if i <= len(args)-2 {
-				response := generateDeck(args[i+1])
-				i++
-				return errors.New(response)
-			}
 		default:
 			fmt.Print(args[i], " is not a valid command. Use 'goki -h' for more information.")
-			return errors.New("Input Error")
+			return errors.New("input Error")
 		}
 
 	}

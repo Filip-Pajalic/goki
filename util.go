@@ -1,24 +1,19 @@
 package main
 
 import (
-	"encoding/csv"
-	"encoding/json"
+	"bufio"
 	"fmt"
-	"io"
 	"log"
-	"math"
 	"os"
 	"os/user"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/google/uuid"
 	"golang.org/x/term"
 )
 
@@ -26,7 +21,10 @@ func updateRows() []table.Row {
 	rows := []table.Row{}
 	for _, deck := range currUser.decks {
 		deck.Cards.Title = deck.Name
-		rows = append(rows, table.Row{deck.Name, deck.NumNew(), deck.NumLearning(), deck.NumReview()})
+		rows = append(
+			rows,
+			table.Row{deck.Name, deck.NumNew(), deck.NumLearning(), deck.NumReview()},
+		)
 	}
 	return rows
 }
@@ -76,19 +74,42 @@ func saveAll() {
 }
 
 func saveDecks() {
-	jsonData, err := json.Marshal(currUser.Decks())
+	var sb strings.Builder
+	sb.WriteString("# Decks\n\n")
+	for _, deck := range currUser.decks {
+		sb.WriteString(fmt.Sprintf("## %s\n- Deck File: %s\n", deck.Name, deck.Name))
+	}
+
+	markdownData := sb.String()
+
+	// Write the Markdown data to the file
+	err := os.WriteFile(filepath.Join(appDir, "decks.md"), []byte(markdownData), 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
-	os.WriteFile(appDir+"/decks.json", jsonData, 0644)
 }
 
 func (d *Deck) saveCards() {
-	jsonData, err := json.Marshal(d.Cards.Items())
+	var sb strings.Builder
+	sb.WriteString("# Cards\n\n")
+	for _, card := range d.Cards.Items() {
+		c := card.(*Card)
+		sb.WriteString(c.ToMarkdown())
+	}
+
+	markdownData := sb.String()
+
+	// Ensure the directory exists
+	cardDir := filepath.Join(appDir, "cards")
+	if err := os.MkdirAll(cardDir, 0755); err != nil {
+		log.Fatal(err)
+	}
+
+	// Write the Markdown data to the file
+	err := os.WriteFile(filepath.Join(cardDir, d.Name+".md"), []byte(markdownData), 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
-	os.WriteFile(appDir+"/cards/"+d.Json, jsonData, 0644)
 }
 
 func createFolders() string {
@@ -113,10 +134,10 @@ func createFolders() string {
 
 func loadDecks() {
 	appDir = createFolders()
-	d := readDecks(appDir + "/decks.json")
+	d := readDecks(filepath.Join(appDir, "decks.md"))
 	for _, curr := range d {
-		cards := readCards(appDir + "/cards/" + curr.Json)
-		deck := InitDeck(curr.Name, curr.Json, cards)
+		cards := readCards(filepath.Join(appDir, "cards", curr.Name+".md"))
+		deck := InitDeck(curr.Name, curr.Name, cards)
 		currUser.decks = append(currUser.decks, deck)
 	}
 }
@@ -129,8 +150,9 @@ func readDecks(fileName string) []*Deck {
 			log.Fatalf("Error creating file: %s", err)
 		}
 		defer file.Close()
-		if err := json.NewEncoder(file).Encode([]interface{}{}); err != nil {
-			log.Fatalf("Error writing to decks.json: %s", err)
+		_, err := file.WriteString("# Decks\n\n")
+		if err != nil {
+			log.Fatalf("Error writing to decks.md: %s", err)
 		}
 		_, err = file.Seek(0, 0)
 		if err != nil {
@@ -140,24 +162,28 @@ func readDecks(fileName string) []*Deck {
 		defer file.Close()
 	}
 
-	byteValue, err := io.ReadAll(file)
-	if err != nil {
-		log.Fatalf("Error reading file: %s", err)
-	}
-
-	var jsonDecks []Deck
-	err = json.Unmarshal(byteValue, &jsonDecks)
-	if err != nil {
-		log.Fatalf("Error parsing JSON: %s", err)
-	}
-
-	decks := []*Deck{}
-	for _, jsonDeck := range jsonDecks {
-		deck := Deck{
-			Name: jsonDeck.Name,
-			Json: jsonDeck.Json,
+	scanner := bufio.NewScanner(file)
+	var decks []*Deck
+	var currentDeck *Deck
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "## ") {
+			if currentDeck != nil {
+				decks = append(decks, currentDeck)
+			}
+			currentDeck = &Deck{Name: strings.TrimPrefix(line, "## "), Json: ""}
+		} else if strings.HasPrefix(line, "- JSON File: ") {
+			if currentDeck != nil {
+				currentDeck.Name = strings.TrimPrefix(line, "- JSON File: ")
+			}
 		}
-		decks = append(decks, &deck)
+	}
+	if currentDeck != nil {
+		decks = append(decks, currentDeck)
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Fatalf("Error reading file: %s", err)
 	}
 
 	return decks
@@ -170,29 +196,32 @@ func readCards(fileName string) []list.Item {
 	}
 	defer file.Close()
 
-	byteValue, err := io.ReadAll(file)
-	if err != nil {
-		log.Fatalf("Error reading file: %s", err)
-	}
-
-	var jsonCards []Card
-	err = json.Unmarshal(byteValue, &jsonCards)
-	if err != nil {
-		log.Fatalf("Error parsing JSON: %s", err)
-	}
-
-	cards := []list.Item{}
-	for _, jsonCard := range jsonCards {
-		card := Card{
-			Front:        WrapString(jsonCard.Front, 70),
-			Back:         WrapString(jsonCard.Back, 70),
-			Score:        jsonCard.Score,
-			Interval:     jsonCard.Interval,
-			EaseFactor:   jsonCard.EaseFactor,
-			Status:       jsonCard.Status,
-			LastReviewed: jsonCard.LastReviewed,
+	scanner := bufio.NewScanner(file)
+	var cards []list.Item
+	var currentCard *Card
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "### Card") {
+			if currentCard != nil {
+				cards = append(cards, currentCard)
+			}
+			currentCard = &Card{}
+		} else if strings.HasPrefix(line, "- Front: ") {
+			if currentCard != nil {
+				currentCard.Front = strings.TrimPrefix(line, "- Front: ")
+			}
+		} else if strings.HasPrefix(line, "- Back: ") {
+			if currentCard != nil {
+				currentCard.Back = strings.TrimPrefix(line, "- Back: ")
+			}
 		}
-		cards = append(cards, &card)
+	}
+	if currentCard != nil {
+		cards = append(cards, currentCard)
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Fatalf("Error reading file: %s", err)
 	}
 
 	return cards
@@ -215,149 +244,78 @@ func GetScreenDimensions() (int, int) {
 	return width, height
 }
 
-func (d *Deck) NameCardsJson() {
-	id := uuid.New()
-	d.Json = fmt.Sprintf("%s%s", id, ".json")
-}
-
-func (d *Deck) DeleteCardsJson() {
-	filePath := appDir + "/cards/" + d.Json
-
-	if _, err := os.Stat(filePath); err == nil {
-		err := os.Remove(filePath)
-		if err != nil {
-			fmt.Println("Error deleting file:", err)
-		}
-	}
-}
-
 func WrapString(input string, maxWidth int) string {
 	if maxWidth < 1 {
 		return input
 	}
 
 	var result strings.Builder
-	re := regexp.MustCompile(`(\S+ +)|\S+`)
-	words := re.FindAllString(input, -1)
-	currentLineLength := 0
+	lines := strings.Split(input, "\n")
 
-	for _, word := range words {
-		wordLength := len(word)
-		spaceNeeded := wordLength
-		if currentLineLength > 0 {
-			spaceNeeded++
-		}
-
-		if currentLineLength+spaceNeeded > maxWidth {
+	for _, line := range lines {
+		if len(line) == 0 {
 			result.WriteString("\n")
-			currentLineLength = 0
+			continue
 		}
 
-		result.WriteString(word)
-		currentLineLength += wordLength
+		re := regexp.MustCompile(`(\S+ +)|\S+`)
+		words := re.FindAllString(line, -1)
+		currentLineLength := 0
+
+		for _, word := range words {
+			wordLength := len(word)
+			spaceNeeded := wordLength
+			if currentLineLength > 0 {
+				spaceNeeded++ // account for a space before the word
+			}
+
+			if currentLineLength+spaceNeeded > maxWidth {
+				result.WriteString("\n")
+				currentLineLength = 0
+			} else if currentLineLength > 0 {
+				result.WriteString(" ")
+				currentLineLength++
+			}
+
+			result.WriteString(word)
+			currentLineLength += wordLength
+		}
+		result.WriteString("\n")
 	}
 
 	return result.String()
 }
 
+// New WrapStringDynamic function
+func WrapStringDynamic(input string, screenWidth int, scaleFactor float64) string {
+	dynamicWidth := int(scaleFactor * float64(screenWidth))
+	return WrapString(input, dynamicWidth)
+}
+
 func PrintDecks() {
 	var section []string
 	section = append(section, "\nDecks:")
+
 	for i, deck := range currUser.decks {
-		numDigits := 1
-		if i > 9 {
-			numDigits = int(math.Log10(float64(i))) + 1
-		}
+		// Get the number of new, learning, and review cards
+		newCount := deck.NumNew()
+		learningCount := deck.NumLearning()
+		reviewCount := deck.NumReview()
 
-		spaces := 5 - numDigits
-		spaceStr := strings.Repeat(" ", spaces)
+		// Format the deck information
+		deckInfo := fmt.Sprintf(
+			"**%d. %s**\nNew: %d | Learning: %d | Review: %d\n",
+			i+1, // Deck numbering starts from 1
+			deck.Name,
+			newCount,
+			learningCount,
+			reviewCount,
+		)
 
-		section = append(section, spaceStr+strconv.Itoa(i)+". "+deck.Name)
-	}
-	if len(currUser.decks) == 0 {
-		msg := "    No decks.\n    Press 'N' to create a new deck.\n    Use 'goki --gpt <prompt>' to generate a new deck using GPT."
-		section = append(section, msg)
-	} else {
-		section = append(section, "\nuse 'goki review <deck index>' to review a deck.\n")
-	}
-	fmt.Println(lipgloss.JoinVertical(lipgloss.Left, section...))
-}
-
-func readDeckStdin(sep rune) string {
-	stat, err := os.Stdin.Stat()
-	if err != nil {
-		return ""
+		section = append(section, deckInfo)
 	}
 
-	if stat.Mode()&os.ModeCharDevice != 0 {
-		return ""
-	}
-
-	var cards []list.Item
-	reader := csv.NewReader(os.Stdin)
-	reader.Comma = sep
-	for {
-		record, err := reader.Read()
-		if err != nil {
-			if err.Error() == "EOF" {
-				break
-			}
-		}
-
-		if len(record) == 2 {
-			question, answer := record[0], record[1]
-			newCard := NewCard(question, answer)
-			cards = append(cards, newCard)
-		} else if len(record) > 2 {
-			fmt.Println("Incorrect format: record rows must have exactly 2 fields.")
-		}
-	}
-
-	var deck *Deck
-	if csvName != "" {
-		deck = InitDeck(csvName, "", cards)
-	} else {
-		deck = InitDeck("Loaded Deck", "", cards)
-	}
-	currUser.decks = append(currUser.decks, deck)
-	saveAll()
-
-	return "Import successful!"
-}
-
-func createDeckStdin() string {
-	stat, err := os.Stdin.Stat()
-	if err != nil {
-		return fmt.Sprintf("Error reading from stdin: %v\n", err)
-	}
-
-	if stat.Mode()&os.ModeCharDevice != 0 {
-		return "Error no input provided."
-	}
-
-	input, err := io.ReadAll(os.Stdin)
-
-	if err != nil {
-		return fmt.Sprintf("Error reading from stdin: %v\n", err)
-	}
-
-	content := strings.TrimSpace(string(input))
-
-	response := generateDeck(content)
-
-	return response
-}
-
-func generateDeck(s string) string {
-	fmt.Println("Generating deck...")
-	deck, err := gptClient(s)
-
-	if err != nil || deck == nil {
-		return fmt.Sprint("Error: ", err)
-	}
-
-	currUser.decks = append(currUser.decks, deck)
-	saveAll()
-
-	return fmt.Sprintf("Deck Created as: %v", deck.Name)
+	// Join the section slice into a single string and print it
+	output := strings.Join(section, "\n")
+	fmt.Println(output)
 }

@@ -12,15 +12,13 @@ import (
 )
 
 type User struct {
-	help       help.Model
-	KeyMap     keyMap
-	table      table.Model
-	input      textinput.Model
-	spinner    spinner.Model
-	decks      []*Deck
-	del        bool
-	gpt        bool
-	gptLoading bool
+	help    help.Model
+	KeyMap  keyMap
+	table   table.Model
+	input   textinput.Model
+	spinner spinner.Model
+	decks   []*Deck
+	del     bool
 }
 
 func (u *User) Decks() []*Deck {
@@ -62,21 +60,6 @@ func (u *User) Init() tea.Cmd {
 	return nil
 }
 
-func asyncGpt(u *User, s string) {
-	u.gptLoading = true
-	deck, err := gptClient(s)
-	if err != nil {
-		// Set critical error so that the error is printed after tui exit
-		criticalError = err
-		u.Update(tea.Quit)
-	}
-	u.decks = append(u.decks, deck)
-	u.table.SetRows(updateRows())
-	u.Update(nil)
-	u.gptLoading = false
-	u.gpt = false
-}
-
 func (u *User) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
@@ -107,7 +90,6 @@ func (u *User) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, u.KeyMap.New):
 			if !u.input.Focused() {
 				newDeck := InitDeck("New Deck", "", []list.Item{})
-				newDeck.NameCardsJson()
 				u.decks = append(u.decks, newDeck)
 				u.table.SetRows(updateRows())
 				return u.Update(nil)
@@ -127,7 +109,6 @@ func (u *User) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				u.table.Focus()
 				u.input.SetValue("")
 				u.del = false
-				u.gpt = false
 			}
 			return u.Update(nil)
 		case key.Matches(msg, u.KeyMap.ShowFullHelp):
@@ -143,14 +124,6 @@ func (u *User) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				u.input.PromptStyle = focusedStyle
 				return u, nil
 			}
-		case key.Matches(msg, u.KeyMap.Gpt):
-			if !u.input.Focused() && !u.gptLoading {
-				u.table.Blur()
-				u.input.Focus()
-				u.input.PromptStyle = focusedStyle
-				u.gpt = true
-				return u, nil
-			}
 		case key.Matches(msg, u.KeyMap.Enter):
 			if u.input.Focused() {
 				s := u.input.Value()
@@ -160,14 +133,10 @@ func (u *User) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if s == "yes" {
 						temp := u.table.Cursor()
 						u.table.SetCursor(temp - 1)
-						u.decks[i].DeleteCardsJson()
+						//u.decks[i].DeleteCardsJson()
 						u.decks = append(u.decks[:i], u.decks[i+1:]...)
 						u.table.SetRows(updateRows())
 					}
-				} else if u.gpt {
-					// GPT request
-					go asyncGpt(u, s)
-					u.gpt = false
 				} else if len(s) > 0 {
 					// Rename
 					u.decks[i].Name = s
@@ -182,9 +151,6 @@ func (u *User) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				u.table.Focus()
 				u.input.SetValue("")
 				u.input.PromptStyle = blurredStyle
-				if u.gptLoading {
-					return u, u.spinner.Tick
-				}
 			}
 		}
 	case tea.WindowSizeMsg:
@@ -225,12 +191,8 @@ func (u *User) View() string {
 
 	if u.del {
 		msg = "Type 'yes' to confirm deletion:"
-	} else if u.gptLoading {
-		msg = u.spinner.View() + " Generating deck..."
-	} else if u.gpt {
-		msg = "Prompt GPT to generate a deck:"
 	} else if len(u.decks) == 0 {
-		msg = "No decks.\nPress 'N' to create a new deck.\nPress 'G' to generate a new deck using GPT."
+		msg = "No decks.\nPress 'N' to create a new deck."
 	}
 
 	footer = append(footer, homeFooterStyle.Render(msg))
